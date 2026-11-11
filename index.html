@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wi-Fi profile builder</title>
+<!--
+  Standalone .mobileconfig builder for Wi-Fi: EAP-TLS, PEAP, WPA2 Personal
+  and WPA3 Personal.
+
+  Open this file directly in a browser. Nothing is uploaded and no network
+  request is made: the certificates you choose are read with the local
+  FileReader API, turned into a property list in memory, and handed back as a
+  download. You can confirm that by opening it with the network cable out.
+
+  The EAP-TLS profile keeps the layout that is known to work on iOS here:
+  a root certificate payload, a PKCS#12 identity payload, and a Wi-Fi payload
+  that pins the RADIUS server name and accepts EAP type 13 only. PEAP uses
+  the same root certificate payload and pinning, without the identity.
+-->
+<style>
+*{box-sizing:border-box}
+body{font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+background:#f5f6f8;color:#1d2125;margin:0;padding:32px 16px}
+.wrap{max-width:780px;margin:0 auto}
+h1{font-size:23px;margin:0 0 4px}
+.sub{color:#6b7076;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #e3e6ea;border-radius:12px;
+padding:22px 24px;margin-bottom:18px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;
+color:#6b7076;margin:0 0 16px}
+label{display:block;font-weight:600;font-size:13px;margin:14px 0 5px}
+label:first-of-type{margin-top:0}
+.hint{font-weight:400;color:#6b7076;font-size:12px;margin-top:3px}
+input[type=text],input[type=password],select{width:100%;padding:9px 11px;
+border:1px solid #d0d4d9;border-radius:7px;font-size:14px;font-family:inherit;
+background:#fff}
+input[type=file]{width:100%;font-size:13px;padding:9px;border:1px dashed #c3c8ce;
+border-radius:7px;background:#fafbfc}
+input:focus,select:focus{outline:2px solid #1a66d9;outline-offset:-1px;border-color:transparent}
+.row{display:flex;gap:14px;flex-wrap:wrap}
+.row>div{flex:1;min-width:210px}
+.chk{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:14px}
+.chk input{width:16px;height:16px;margin:0}
+.types{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px}
+.types label.type{margin:0;font-weight:400;border:1px solid #d0d4d9;
+border-radius:9px;padding:10px 12px;cursor:pointer}
+.types label.type:has(input:checked){border-color:#1a66d9;background:#eef4fd}
+.type input{margin:0 6px 0 0;vertical-align:-1px}
+.type b{font-size:14px}
+.pw{display:flex;gap:8px}
+.pw input{flex:1}
+button{background:#1a66d9;color:#fff;border:0;padding:11px 20px;
+border-radius:7px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+button:hover{background:#1557b8}
+button:disabled{background:#b9c0c8;cursor:not-allowed}
+button.ghost,button.eye{background:#fff;color:#1d2125;border:1px solid #d0d4d9}
+button.ghost:hover,button.eye:hover{background:#f3f5f7}
+button.eye{padding:0 14px;font-size:13px;font-weight:500;min-width:64px}
+.actions{display:flex;gap:10px;align-items:center;margin-top:20px;flex-wrap:wrap}
+.ok{background:#e3f6e8;border:1px solid #a6e5b8;padding:14px 16px;
+border-radius:9px;margin-bottom:16px;font-size:14px}
+/* pre-wrap so a multi-line message, such as the openssl command offered
+   when a .p12 uses an encoding Apple cannot import, keeps its line breaks */
+.err{background:#fde8e8;border:1px solid #f3b9b4;padding:14px 16px;
+border-radius:9px;margin-bottom:16px;font-size:14px;white-space:pre-wrap}
+.warnbox{background:#fdf6e3;border:1px solid #ecd9a4;padding:14px 16px;
+border-radius:9px;margin-bottom:16px;font-size:13px}
+code{background:#eef0f3;padding:2px 6px;border-radius:4px;
+font:13px ui-monospace,Menlo,Consolas,monospace}
+pre{background:#1d2125;color:#e6e9ec;padding:16px;border-radius:9px;
+overflow:auto;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:340px}
+table{border-collapse:collapse;width:100%;font-size:13px;margin-top:4px}
+td{padding:5px 10px 5px 0;border-top:1px solid #eef0f2;vertical-align:top}
+td:first-child{color:#6b7076;white-space:nowrap;width:1%}
+.mono{font:12px ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.footnote{color:#6b7076;font-size:12px;margin-top:26px;line-height:1.6}
+.opt{font-weight:400;font-size:11px;color:#8a9099;border:1px solid #dde1e6;
+border-radius:4px;padding:1px 6px;margin-left:5px;vertical-align:1px}
+.ver{display:inline-block;margin-left:6px;font-size:11px;color:#8a9099;
+background:#eef0f3;border-radius:4px;padding:1px 7px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Wi-Fi profile builder</h1>
+<div class="sub">
+  Builds an Apple <code>.mobileconfig</code> for iPhone, iPad and Mac:
+  EAP-TLS, PEAP, WPA2 Personal or WPA3 Personal.
+  Runs entirely in this page &mdash; nothing is uploaded.
+  <span class="ver">v7</span>
+</div>
+
+<div id="flash"></div>
+
+<div class="card">
+  <h2>1 &middot; Network type</h2>
+  <div class="types">
+    <label class="type"><input type="radio" name="type" value="eaptls" checked>
+      <b>EAP-TLS</b>
+      <div class="hint">802.1X with a client certificate (<code>.p12</code>).</div></label>
+    <label class="type"><input type="radio" name="type" value="peap">
+      <b>PEAP</b>
+      <div class="hint">802.1X with username and password (MSCHAPv2).</div></label>
+    <label class="type"><input type="radio" name="type" value="psk">
+      <b>WPA2 Personal</b>
+      <div class="hint">Pre-shared key (PSK).</div></label>
+    <label class="type"><input type="radio" name="type" value="sae">
+      <b>WPA3 Personal</b>
+      <div class="hint">SAE, optionally with WPA2 fallback.</div></label>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2 &middot; Credentials</h2>
+
+  <div data-types="eaptls peap">
+    <label for="caFile">Certificate authority
+      <div class="hint">The CA that signed the certificate of the server doing
+        EAP: your RADIUS server, or the WLC when it runs Local EAP.
+        PEM (<code>ca.pem</code>, <code>ca.crt</code>) or DER (<code>ca.der</code>).</div>
+    </label>
+    <input type="file" id="caFile" accept=".pem,.crt,.cer,.der,.txt">
+    <div id="caInfo"></div>
+  </div>
+
+  <div data-types="eaptls">
+    <label for="p12File">Client identity
+      <div class="hint">A PKCS#12 bundle holding the user's private key and
+        certificate: <code>.p12</code> or <code>.pfx</code>.</div>
+    </label>
+    <input type="file" id="p12File" accept=".p12,.pfx">
+    <div id="p12Info"></div>
+
+    <label for="p12Pass">Password for the <code>.p12</code>
+      <div class="hint">Embedded in the profile so the device can import the key
+        without prompting. Required.</div>
+    </label>
+    <div class="pw"><input type="password" id="p12Pass" autocomplete="off" spellcheck="false">
+      <button type="button" class="eye" data-for="p12Pass">Show</button></div>
+  </div>
+
+  <div data-types="peap">
+    <div class="row">
+      <div>
+        <label for="peapUser">PEAP username</label>
+        <input type="text" id="peapUser" placeholder="alice" autocomplete="off" spellcheck="false">
+      </div>
+      <div>
+        <label for="peapPass">PEAP password</label>
+        <div class="pw"><input type="password" id="peapPass" autocomplete="off" spellcheck="false">
+          <button type="button" class="eye" data-for="peapPass">Show</button></div>
+      </div>
+    </div>
+    <div class="hint">Both are embedded, so the device joins without asking.</div>
+
+    <label for="outerId">Outer identity <span class="opt">optional</span>
+      <div class="hint">Sent in the clear before the TLS tunnel is up, in place
+        of the real username, for example <code>anonymous</code>. Leave blank
+        to send the real username. Some servers need a realm such as
+        <code>anonymous@example.lan</code>.</div>
+    </label>
+    <input type="text" id="outerId" placeholder="anonymous" spellcheck="false">
+  </div>
+
+  <div data-types="psk sae">
+    <label for="psk">Passphrase
+      <div class="hint" id="pskHint"></div>
+    </label>
+    <div class="pw"><input type="password" id="psk" autocomplete="off" spellcheck="false">
+      <button type="button" class="eye" data-for="psk">Show</button></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>3 &middot; Network</h2>
+  <div class="row">
+    <div>
+      <label for="ssid">Wi-Fi network name (SSID)</label>
+      <input type="text" id="ssid" placeholder="your Wi-Fi network name" spellcheck="false">
+      <div class="hint" id="ssidLen">Maximum 32 bytes.</div>
+    </div>
+    <div data-types="eaptls peap">
+      <label for="server">Server name to trust <span class="opt">optional</span></label>
+      <input type="text" id="server" placeholder="radius.example.lan" spellcheck="false">
+      <div class="hint">The name on the <em>server's own</em> certificate. It
+        is in neither the CA nor the <code>.p12</code>, so read it from the
+        server with<br>
+        <span class="mono">openssl x509 -in server.pem -noout -subject -ext subjectAltName</span><br>
+        The CN and the <code>subjectAltName</code> normally carry the same
+        name. Where they differ, use the <code>subjectAltName</code>: iOS 13
+        and later match on that and ignore the CN.<br>
+        Leave blank to trust any certificate signed by the CA above.
+        Wildcards such as <code>*.example.lan</code> are allowed.</div>
+    </div>
+  </div>
+  <div class="row">
+    <div data-types="eaptls">
+      <label for="user">User / identity label</label>
+      <input type="text" id="user" placeholder="alice" spellcheck="false">
+      <div class="hint">Shown on the device and used in the file name.</div>
+    </div>
+    <div>
+      <label for="org">Organisation <span class="opt">optional</span></label>
+      <input type="text" id="org" placeholder="your organisation" spellcheck="false">
+      <div class="hint">Shown under the profile name. Left out if blank.</div>
+    </div>
+  </div>
+
+  <div data-types="eaptls peap">
+    <label for="sec">Security</label>
+    <select id="sec">
+      <option value="WPA" selected>WPA/WPA2 Enterprise</option>
+      <option value="WPA2">WPA2/WPA3 Enterprise</option>
+      <option value="WPA3">WPA3 Enterprise only</option>
+    </select>
+    <div class="hint">The networks the device may join, from iOS 16 and macOS 13
+      on. Choose WPA2/WPA3 or WPA3 only if the WLAN runs WPA3: with
+      WPA/WPA2 selected, the device refuses a WPA3-only network.</div>
+  </div>
+
+  <label>Options</label>
+  <div class="chk" data-types="sae"><input type="checkbox" id="saeTrans">
+    <span>Also allow WPA2 (WPA2/WPA3 transition mode)</span></div>
+  <div class="chk"><input type="checkbox" id="autojoin" checked>
+    <span>Join this network automatically</span></div>
+  <div class="chk"><input type="checkbox" id="hidden">
+    <span>Network does not broadcast its name (hidden)</span></div>
+  <div data-types="eaptls peap">
+    <div class="chk"><input type="checkbox" id="trustExc">
+      <span>Let the user accept an unknown server certificate</span></div>
+    <div class="hint" style="margin-top:2px">
+      Leave this box clear. When it is clear the device refuses any server
+      certificate that is not signed by your CA and named above, with no prompt
+      to click through.
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="build">Build profile</button>
+    <button id="preview" class="ghost" type="button">Show / hide XML</button>
+  </div>
+</div>
+
+<div class="card" id="outCard" style="display:none">
+  <h2>4 &middot; Result</h2>
+  <div id="summary"></div>
+  <pre id="xml" style="display:none"></pre>
+</div>
+
+<div class="footnote">
+  <div data-types="eaptls">
+    <b>If you have a <code>.crt</code> and a <code>.key</code> instead of a <code>.p12</code>,</b>
+    combine them first. A browser cannot build a PKCS#12 bundle, so this step
+    needs openssl:
+    <pre style="max-height:none;margin-top:8px">openssl pkcs12 -export \
+  -in alice.crt -inkey alice.key -certfile ca.pem \
+  -name alice -out alice.p12</pre>
+  </div>
+  <b>Treat the finished profile as a secret.</b> It contains
+  <span id="secretNote"></span>, readable by anyone who opens the file.
+  Transfer it, install it, then delete your copy.
+</div>
+
+</div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+
+/* ---------------------------------------------------------------- helpers */
+
+function flash(kind, html) {
+  $("flash").innerHTML = html ? `<div class="${kind}">${html}</div>` : "";
+  if (html) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;");
+}
+
+/* Base64 in fixed-size chunks. Passing a whole multi-kilobyte array to
+   String.fromCharCode at once overflows the argument stack in some browsers. */
+function toBase64(bytes) {
+  let s = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(s);
+}
+
+function wrap64(b64) {
+  return b64.replace(/(.{64})/g, "$1\n").trim();
+}
+
+/* crypto.randomUUID needs a secure context, which a file:// page is not
+   guaranteed to be. getRandomValues is available either way, so build the
+   version 4 UUID by hand and keep this page working from the filesystem. */
+function uuid4() {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-` +
+         `${h.slice(16,20)}-${h.slice(20)}`;
+}
+
+function readFile(input) {
+  return new Promise((resolve, reject) => {
+    const f = input.files && input.files[0];
+    if (!f) return resolve(null);
+    const r = new FileReader();
+    r.onload = () => resolve({ name: f.name, bytes: new Uint8Array(r.result) });
+    r.onerror = () => reject(new Error(`cannot read ${f.name}`));
+    r.readAsArrayBuffer(f);
+  });
+}
+
+async function sha256Hex(bytes) {
+  // Unavailable on an insecure origin; the page still works without it.
+  if (!crypto.subtle) return null;
+  try {
+    const d = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0"))
+      .join("").replace(/(.{2})(?=.)/g, "$1:");
+  } catch { return null; }
+}
+
+/* ------------------------------------------------------------ certificates */
+
+/* A profile carries certificates as base64 of their DER form.
+
+   A PEM file is already base64 of DER, wrapped in BEGIN/END lines, so the
+   body is taken as-is. A DER file is raw bytes and is encoded here. Either
+   way the result must start with 0x30, the ASN.1 tag for SEQUENCE, which
+   every X.509 certificate and PKCS#12 bundle begins with. */
+function derBase64(file, what) {
+  const head = new TextDecoder().decode(file.bytes.subarray(0, 64));
+
+  if (head.includes("-----BEGIN")) {
+    const text = new TextDecoder().decode(file.bytes);
+    const m = text.match(
+      /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/);
+    if (!m) {
+      throw new Error(
+        `${file.name} is a PEM file but holds no CERTIFICATE block. ` +
+        `A private key or a CSR is not a certificate.`);
+    }
+    const body = m[1].replace(/\s+/g, "");
+    let raw;
+    try { raw = atob(body); } catch { throw new Error(`${file.name}: corrupt base64`); }
+    if (raw.charCodeAt(0) !== 0x30) {
+      throw new Error(`${file.name} does not decode to a certificate.`);
+    }
+    return { b64: body, der: Uint8Array.from(raw, (c) => c.charCodeAt(0)),
+             format: "PEM" };
+  }
+
+  if (file.bytes[0] !== 0x30) {
+    throw new Error(
+      `${file.name} is neither PEM nor DER. ${what} must be an X.509 ` +
+      `certificate file.`);
+  }
+  return { b64: toBase64(file.bytes), der: file.bytes, format: "DER" };
+}
+
+/* Apple's PKCS#12 importer accepts only the legacy encoding: 3DES for both
+   bags and a SHA-1 MAC. Measured on macOS 26.7.1, everything else fails,
+   and the most common failure is reported as a wrong password even when the
+   password is right:
+
+     AES-256-CBC + SHA-256 MAC -> "MAC verification failed (wrong password?)"
+     AES-256-CBC + SHA-1 MAC   -> "Unknown format in import"
+     3DES        + SHA-256 MAC -> "MAC verification failed (wrong password?)"
+     3DES        + SHA-1 MAC   -> imports
+
+   Recent iOS accepts the modern encoding, so a bundle exported with the
+   OpenSSL 3 defaults installs on iOS 26 and fails on macOS and on iOS 16.
+   Detecting it here turns a misleading on-device error into a clear one.
+
+   This is a byte search for algorithm OIDs rather than a real ASN.1 parse.
+   That is sufficient: the OIDs are unambiguous and appear nowhere else in a
+   PKCS#12 file. A full parser would need a crypto library this page does
+   not have. */
+const OID = {
+  pbes2:   [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d],
+  tripleDes: [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x0c, 0x01, 0x03],
+  sha256:  [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01],
+  sha1:    [0x2b, 0x0e, 0x03, 0x02, 0x1a],
+};
+
+function hasBytes(hay, needle) {
+  outer:
+  for (let i = 0; i + needle.length <= hay.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (hay[i + j] !== needle[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+function p12Encoding(bytes) {
+  return {
+    pbes2: hasBytes(bytes, OID.pbes2),
+    tripleDes: hasBytes(bytes, OID.tripleDes),
+    sha256: hasBytes(bytes, OID.sha256),
+    sha1: hasBytes(bytes, OID.sha1),
+  };
+}
+
+/* Returns null when the bundle looks importable, otherwise an explanation. */
+function p12Complaint(bytes) {
+  const e = p12Encoding(bytes);
+  if (e.pbes2 || (e.sha256 && !e.tripleDes)) {
+    return "it uses modern AES encryption (PBES2)";
+  }
+  if (e.tripleDes && e.sha256 && !e.sha1) {
+    return "its integrity MAC uses SHA-256";
+  }
+  if (!e.tripleDes) {
+    return "its encryption algorithm is not the one Apple accepts";
+  }
+  return null;
+}
+
+const REENCODE_CMD =
+  "openssl pkcs12 -in old.p12 -nodes -out flat.pem\n" +
+  "openssl pkcs12 -export -in flat.pem -out new.p12 \\\n" +
+  "  -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1\n" +
+  "rm flat.pem";
+
+function p12Base64(file) {
+  if (file.bytes[0] !== 0x30) {
+    throw new Error(
+      `${file.name} is not a PKCS#12 bundle. It must be a binary .p12 or ` +
+      `.pfx file, not a PEM certificate.`);
+  }
+  const why = p12Complaint(file.bytes);
+  if (why) {
+    throw new Error(
+      `${file.name} cannot be installed by Apple devices because ${why}. ` +
+      `Recent iOS tolerates this, but macOS and older iOS reject it and ` +
+      `report it as an authentication or wrong-password error. Re-encode ` +
+      `the bundle first, keeping the same certificate:\n\n${REENCODE_CMD}`);
+  }
+  return toBase64(file.bytes);
+}
+
+/* ------------------------------------------------------------ network type */
+
+const TYPES = {
+  eaptls: { label: "EAP-TLS", enterprise: true,
+            secret: "the user's private key and the password that unlocks it" },
+  peap:   { label: "PEAP", enterprise: true,
+            secret: "the PEAP username and password" },
+  psk:    { label: "WPA2 Personal", enterprise: false,
+            secret: "the Wi-Fi passphrase" },
+  sae:    { label: "WPA3 Personal", enterprise: false,
+            secret: "the Wi-Fi passphrase" },
+};
+
+/* EncryptionType meanings from iOS 16 and macOS 13. Earlier iOS treats all
+   three WPA values alike; earlier macOS needs an exact match. */
+const ENC_DESC = {
+  WPA:  "WPA or WPA2",
+  WPA2: "WPA2 or WPA3",
+  WPA3: "WPA3 only",
+};
+
+function currentType() {
+  return document.querySelector("input[name=type]:checked").value;
+}
+
+/* WPA2 accepts 8 to 63 ASCII characters, which are hashed into the key, or
+   the 256-bit key itself as 64 hex digits. SAE uses the passphrase directly
+   and has no hex form. Non-ASCII passphrases are refused because devices
+   disagree on how to encode them. */
+function passphraseProblem(type, s) {
+  if (type === "psk" && /^[0-9A-Fa-f]{64}$/.test(s)) return null;
+  if (!/^[\x20-\x7e]*$/.test(s)) {
+    return "The passphrase contains characters outside printable ASCII.";
+  }
+  if (s.length < 8 || s.length > 63) {
+    return `The passphrase is ${s.length} characters. It must be 8 to 63` +
+      (type === "psk" ? ", or exactly 64 hexadecimal digits." : ".");
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------- plist */
+
+function plStr(k, v) { return `    <key>${k}</key>\n    <string>${esc(v)}</string>`; }
+function plBool(k, v) { return `    <key>${k}</key>\n    <${v ? "true" : "false"}/>`; }
+function plInt(k, v) { return `    <key>${k}</key>\n    <integer>${v}</integer>`; }
+function plData(k, b64) {
+  return `    <key>${k}</key>\n    <data>\n${wrap64(b64)}\n    </data>`;
+}
+
+function indent(block, pad) {
+  return block.split("\n").map((l) => (l ? pad + l : l)).join("\n");
+}
+
+function slugOf(s, fallback) {
+  return s.replace(/[^A-Za-z0-9._-]/g, "-") || fallback;
+}
+
+/* A profile whose PayloadIdentifier matches an installed one replaces it.
+   EAP-TLS keeps the identifiers of earlier versions so a rebuilt profile
+   still replaces the old one; the other types include the SSID so profiles
+   for different networks can sit side by side. */
+function identifierFor(o) {
+  if (o.type === "eaptls") {
+    const u = slugOf(o.user, "user");
+    return (part) => `lan.radius.${part}.${u}`;
+  }
+  const s = slugOf(o.ssid, "wifi");
+  if (o.type === "peap") {
+    const u = slugOf(o.peapUser, "user");
+    return (part) => `lan.radius.${part}.peap.${s}.${u}`;
+  }
+  return (part) => `lan.wifi.${part}.${o.type}.${s}`;
+}
+
+function buildProfile(o) {
+  const uCa = uuid4(), uId = uuid4(), uWifi = uuid4(), uTop = uuid4();
+  const t = TYPES[o.type];
+  const pid = identifierFor(o);
+  const payloads = [];
+
+  if (t.enterprise) {
+    payloads.push([
+      plStr("PayloadType", "com.apple.security.root"),
+      plInt("PayloadVersion", 1),
+      plStr("PayloadIdentifier", pid("ca")),
+      plStr("PayloadUUID", uCa),
+      plStr("PayloadDisplayName", "RADIUS Root CA"),
+      plStr("PayloadCertificateFileName", "ca.cer"),
+      plData("PayloadContent", o.caB64),
+    ].join("\n"));
+  }
+
+  if (o.type === "eaptls") {
+    const slug = slugOf(o.user, "user");
+    payloads.push([
+      plStr("PayloadType", "com.apple.security.pkcs12"),
+      plInt("PayloadVersion", 1),
+      plStr("PayloadIdentifier", pid("identity")),
+      plStr("PayloadUUID", uId),
+      plStr("PayloadDisplayName", `${o.user} (EAP-TLS identity)`),
+      plStr("PayloadCertificateFileName", `${slug}.p12`),
+      plStr("Password", o.p12Pass),
+      plData("PayloadContent", o.p12B64),
+    ].join("\n"));
+  }
+
+  const wifi = [
+    plStr("PayloadType", "com.apple.wifi.managed"),
+    plInt("PayloadVersion", 1),
+    plStr("PayloadIdentifier", pid("wifi")),
+    plStr("PayloadUUID", uWifi),
+    plStr("PayloadDisplayName", `Wi-Fi (${o.ssid})`),
+    plStr("SSID_STR", o.ssid),
+    plBool("HIDDEN_NETWORK", o.hidden),
+    plBool("AutoJoin", o.autojoin),
+    plStr("EncryptionType", o.encType),
+  ];
+
+  if (t.enterprise) {
+    /* AcceptEAPTypes holds a single method, 13 for EAP-TLS or 25 for PEAP,
+       so the device cannot fall back to another one. PEAP's inner method is
+       MSCHAPv2 without further keys; TTLSInnerAuthentication applies to
+       EAP-TTLS only. PayloadCertificateAnchorUUID points at the CA payload
+       above and is what limits trust to this one CA.
+
+       TLSTrustedServerNames narrows that further to one server name. It is
+       optional: an empty key would match nothing, so the key is left out
+       altogether when no name is given, and the anchor alone decides trust. */
+    const eap = [
+      "      <key>AcceptEAPTypes</key>",
+      `      <array><integer>${o.type === "eaptls" ? 13 : 25}</integer></array>`,
+    ];
+    if (o.type === "peap") {
+      eap.push("      <key>UserName</key>",
+               `      <string>${esc(o.peapUser)}</string>`,
+               "      <key>UserPassword</key>",
+               `      <string>${esc(o.peapPass)}</string>`);
+      if (o.outerId) {
+        eap.push("      <key>OuterIdentity</key>",
+                 `      <string>${esc(o.outerId)}</string>`);
+      }
+    }
+    if (o.server) {
+      eap.push("      <key>TLSTrustedServerNames</key>",
+               `      <array><string>${esc(o.server)}</string></array>`);
+    }
+    eap.push("      <key>PayloadCertificateAnchorUUID</key>",
+             `      <array><string>${uCa}</string></array>`,
+             "      <key>TLSAllowTrustExceptions</key>",
+             `      <${o.trustExc ? "true" : "false"}/>`);
+
+    if (o.type === "eaptls") wifi.push(plStr("PayloadCertificateUUID", uId));
+    wifi.push("    <key>EAPClientConfiguration</key>",
+              "    <dict>",
+              eap.join("\n"),
+              "    </dict>");
+  } else {
+    wifi.push(plStr("Password", o.psk));
+  }
+  payloads.push(wifi.join("\n"));
+
+  const body = payloads
+    .map((p) => `  <dict>\n${indent(p, "  ")}\n  </dict>`).join("\n");
+
+  /* PayloadOrganization is optional. Substituting a made-up name would put a
+     label on the device that the operator never chose, so an empty box drops
+     the key instead. */
+  const org = o.org
+    ? `  <key>PayloadOrganization</key>\n  <string>${esc(o.org)}</string>\n`
+    : "";
+
+  const who = o.type === "eaptls" ? ` (${o.user})`
+            : o.type === "peap" ? ` (${o.peapUser})` : "";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+"http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadIdentifier</key>
+  <string>${esc(pid("profile"))}</string>
+  <key>PayloadUUID</key>
+  <string>${uTop}</string>
+  <key>PayloadDisplayName</key>
+  <string>${esc(o.ssid)} ${t.label}${esc(who)}</string>
+${org}  <key>PayloadRemovalDisallowed</key>
+  <false/>
+  <key>PayloadContent</key>
+  <array>
+${body}
+  </array>
+</dict>
+</plist>
+`;
+}
+
+/* -------------------------------------------------------------------- page */
+
+let downloadUrl = null;
+
+function applyType() {
+  const type = currentType();
+  document.querySelectorAll("[data-types]").forEach((el) => {
+    el.style.display = el.dataset.types.split(" ").includes(type) ? "" : "none";
+  });
+  $("pskHint").textContent = type === "psk"
+    ? "8 to 63 printable ASCII characters, or exactly 64 hexadecimal digits."
+    : "8 to 63 printable ASCII characters.";
+  $("secretNote").textContent = TYPES[type].secret;
+  $("outCard").style.display = "none";
+  flash("", "");
+}
+
+document.querySelectorAll("input[name=type]").forEach((r) =>
+  r.addEventListener("change", applyType));
+applyType();
+
+document.querySelectorAll("button.eye").forEach((b) =>
+  b.addEventListener("click", () => {
+    const input = $(b.dataset.for);
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    b.textContent = show ? "Hide" : "Show";
+  }));
+
+$("ssid").addEventListener("input", () => {
+  const n = enc.encode($("ssid").value).length;
+  $("ssidLen").textContent =
+    n > 32 ? `${n} bytes — too long, the limit is 32`
+           : `${n} of 32 bytes used.`;
+  $("ssidLen").style.color = n > 32 ? "#b42318" : "";
+});
+
+async function describe(input, box, kind) {
+  box.innerHTML = "";
+  let file;
+  try { file = await readFile(input); } catch (e) {
+    box.innerHTML = `<div class="hint" style="color:#b42318">${esc(e.message)}</div>`;
+    return;
+  }
+  if (!file) return;
+  try {
+    const rows = [];
+    if (kind === "ca") {
+      const c = derBase64(file, "The certificate authority");
+      rows.push(["format", `${c.format}, ${c.der.length} bytes of DER`]);
+      const fp = await sha256Hex(c.der);
+      if (fp) rows.push(["SHA-256", `<span class="mono">${fp}</span>`]);
+    } else {
+      p12Base64(file);
+      rows.push(["format", `PKCS#12, ${file.bytes.length} bytes`]);
+    }
+    box.innerHTML = `<table>${rows.map(
+      ([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>`;
+  } catch (e) {
+    box.innerHTML =
+      `<div class="hint" style="color:#b42318;white-space:pre-wrap">` +
+      `${esc(e.message)}</div>`;
+  }
+}
+
+$("caFile").addEventListener("change", () => describe($("caFile"), $("caInfo"), "ca"));
+$("p12File").addEventListener("change", () => describe($("p12File"), $("p12Info"), "p12"));
+
+$("preview").addEventListener("click", () => {
+  const pre = $("xml");
+  pre.style.display = pre.style.display === "none" ? "block" : "none";
+});
+
+function methodText(o) {
+  switch (o.type) {
+    case "eaptls": return "EAP-TLS only (type 13)";
+    case "peap":
+      return `PEAP with MSCHAPv2 only (type 25), user <b>${esc(o.peapUser)}</b>` +
+        (o.outerId ? `, outer identity <b>${esc(o.outerId)}</b>`
+                   : ", real username sent as outer identity");
+    case "psk": return "WPA2 Personal (pre-shared key)";
+    default:
+      return o.encType === "WPA3" ? "WPA3 Personal (SAE) only"
+                                  : "WPA3 Personal (SAE), WPA2 fallback allowed";
+  }
+}
+
+$("build").addEventListener("click", async () => {
+  flash("", "");
+  try {
+    const type = currentType();
+    const t = TYPES[type];
+    const ssid = $("ssid").value.trim();
+    const server = t.enterprise ? $("server").value.trim() : "";
+    const user = $("user").value.trim();
+    const p12Pass = $("p12Pass").value;
+    const peapUser = $("peapUser").value.trim();
+    const peapPass = $("peapPass").value;
+    const outerId = $("outerId").value.trim();
+    const psk = $("psk").value;
+
+    const caFile = t.enterprise ? await readFile($("caFile")) : null;
+    const p12File = type === "eaptls" ? await readFile($("p12File")) : null;
+
+    const missing = [];
+    if (t.enterprise && !caFile) missing.push("the CA certificate");
+    if (type === "eaptls") {
+      if (!p12File) missing.push("the .p12 identity");
+      if (!p12Pass) missing.push("the .p12 password");
+    }
+    if (type === "peap") {
+      if (!peapUser) missing.push("the PEAP username");
+      if (!peapPass) missing.push("the PEAP password");
+    }
+    if (!t.enterprise && !psk) missing.push("the passphrase");
+    if (!ssid) missing.push("the SSID");
+    if (type === "eaptls" && !user) missing.push("the user label");
+    if (missing.length) {
+      throw new Error(`Still needed: ${missing.join(", ")}.`);
+    }
+
+    const bytes = enc.encode(ssid).length;
+    if (bytes > 32) {
+      throw new Error(
+        `The SSID is ${bytes} bytes. 802.11 allows 32. Accented or ` +
+        `non-Latin characters use more than one byte each.`);
+    }
+    if (!t.enterprise) {
+      const why = passphraseProblem(type, psk);
+      if (why) throw new Error(why);
+    }
+
+    const ca = caFile ? derBase64(caFile, "The certificate authority") : null;
+    const p12B64 = p12File ? p12Base64(p12File) : null;
+
+    const encType = t.enterprise ? $("sec").value
+                  : type === "psk" ? "WPA2"
+                  : $("saeTrans").checked ? "WPA2" : "WPA3";
+
+    const o = {
+      type, ssid, server, user, org: $("org").value.trim(),
+      caB64: ca && ca.b64, p12B64, p12Pass,
+      peapUser, peapPass, outerId, psk, encType,
+      autojoin: $("autojoin").checked,
+      hidden: $("hidden").checked,
+      trustExc: t.enterprise && $("trustExc").checked,
+    };
+    const xml = buildProfile(o);
+
+    $("xml").textContent = xml;
+
+    const tail = type === "eaptls" ? user
+               : type === "peap" ? `peap-${peapUser}` : type;
+    const slug = (ssid + "-" + tail).replace(/[^A-Za-z0-9._-]/g, "_");
+    const fname = `${slug}.mobileconfig`;
+    const blob = new Blob([xml], { type: "application/x-apple-aspen-config" });
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = URL.createObjectURL(blob);
+
+    const rows = [
+      ["file", `<b>${esc(fname)}</b>, ${blob.size} bytes`],
+      ["network", `${esc(ssid)}${o.hidden ? " (hidden)" : ""}`],
+      ["method", methodText(o)],
+      ["security", `${ENC_DESC[encType]} (<code>EncryptionType ${encType}</code>)`],
+    ];
+    if (t.enterprise) {
+      rows.push(["trusts", server
+        ? `only <b>${esc(server)}</b>, signed by the CA above`
+        : "<b style='color:#9a6700'>any server</b> holding a certificate signed by the CA above"]);
+      rows.push(["prompts", o.trustExc
+        ? "<b style='color:#9a6700'>user may accept an unknown server</b>"
+        : "none — an untrusted server is refused"]);
+    }
+    rows.push(["contains", esc(t.secret)]);
+
+    $("outCard").style.display = "block";
+    $("summary").innerHTML = `
+      <table>${rows.map(
+        ([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
+      <div class="actions">
+        <a id="dl" href="${downloadUrl}" download="${esc(fname)}">
+          <button type="button">Download ${esc(fname)}</button></a>
+      </div>`;
+
+    const warn = [];
+    if (t.enterprise && !server) {
+      warn.push(
+        "<b>No server name was pinned.</b> The device will accept any " +
+        "certificate signed by this CA as the RADIUS server, not just " +
+        "yours. The profile works, but a certificate this CA issues for " +
+        "some other purpose could impersonate the server." +
+        (type === "peap"
+          ? " With PEAP that server would also receive the password exchange."
+          : ""));
+    }
+    if (o.trustExc) {
+      warn.push(
+        "<b>Trust exceptions are enabled.</b> The device will let the user " +
+        "accept a server certificate that is not yours at all. That removes " +
+        "most of the protection " + t.label + " gives you.");
+    }
+    const done = `Send it to the device, install it, then delete your copy. ` +
+      `It contains ${esc(t.secret)}.`;
+    flash(warn.length ? "warnbox" : "ok",
+      warn.length
+        ? warn.join("<br><br>") + "<br><br>Profile built. " + done
+        : "<b>Profile built.</b> " + done);
+    $("outCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (e) {
+    $("outCard").style.display = "none";
+    flash("err", `<b>Cannot build the profile.</b> ${esc(e.message)}`);
+  }
+});
+</script>
+</body>
+</html>
