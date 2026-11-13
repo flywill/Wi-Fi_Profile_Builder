@@ -1,0 +1,5 @@
+.DS_Store
+*.mobileconfig
+*.p12
+*.pfx
+*.key
