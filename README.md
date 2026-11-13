@@ -11,11 +11,13 @@ Everything runs in your browser. Certificates and passwords are never uploaded: 
 | EAP-TLS | CA certificate, client `.p12` and its password, optional server name | WPA/WPA2, WPA2/WPA3 or WPA3-only Enterprise | CA, client identity, Wi-Fi (EAP type 13 only) |
 | PEAP (MSCHAPv2) | CA certificate, username, password, optional outer identity and server name | WPA/WPA2, WPA2/WPA3 or WPA3-only Enterprise | CA, Wi-Fi (EAP type 25 only) |
 | Personal | Passphrase (8-63 characters, or 64 hex digits except WPA3-only) | WPA2/WPA3 (PSK + SAE), WPA/WPA2 (PSK) or WPA3-only (SAE) | Wi-Fi |
-| Open | Nothing | Open (no encryption) | Wi-Fi |
+| Open | Nothing | Open (no encryption) or Enhanced Open (OWE) | Wi-Fi |
 
 For EAP-TLS and PEAP the device trusts only the CA you supply, and only the server name you pin if you enter one. It refuses any other server certificate without prompting.
 
 WEP, and Apple's `Any` setting that admits WEP, are not offered.
+
+Apple has no `EncryptionType` value for OWE, so Open and Enhanced Open both write `None`. Supported devices (iOS 16.1, iPadOS 16, macOS 13 or later; iPhone 11, iPads and Macs from late 2020, or newer) use OWE automatically when the WLAN offers it.
 
 ### Private Wi-Fi address
 

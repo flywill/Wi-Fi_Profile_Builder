@@ -108,7 +108,7 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
       <div class="hint">Passphrase: WPA2 (PSK), WPA3 (SAE) or both.</div></label>
     <label class="type"><input type="radio" name="type" value="open">
       <b>Open</b>
-      <div class="hint">No password and no encryption.</div></label>
+      <div class="hint">No password: plain open or Enhanced Open (OWE).</div></label>
   </div>
 </div>
 
@@ -490,8 +490,16 @@ const SECURITY = {
   ],
   open: [
     { value: "None", label: "Open (no encryption)" },
+    { value: "OWE",  label: "Enhanced Open (OWE)" },
   ],
 };
+
+/* Apple has no EncryptionType for OWE. An OWE profile is written as None and
+   the device negotiates OWE itself when the network offers it (iOS 16.1,
+   iPadOS 16, macOS 13 and later, on 2019-2020 and newer hardware). */
+function encValue(enc) {
+  return enc === "OWE" ? "None" : enc;
+}
 SECURITY.peap = SECURITY.eaptls;
 
 const SEC_HINT = {
@@ -499,7 +507,8 @@ const SEC_HINT = {
           "WPA3-only network; choose WPA2/WPA3 or WPA3 only for one.",
   personal: "WPA2/WPA3 joins a PSK, SAE or transition-mode WLAN. " +
             "WPA3 only refuses a WPA2 (PSK) network.",
-  open: "Traffic on an open network is not encrypted.",
+  open: "Both write EncryptionType None: Apple has no separate OWE value. " +
+        "Supported devices use OWE automatically when the WLAN offers it.",
 };
 SEC_HINT.peap = SEC_HINT.eaptls;
 
@@ -507,7 +516,8 @@ const ENC_DESC = {
   WPA:  "WPA or WPA2",
   WPA2: "WPA2 or WPA3",
   WPA3: "WPA3 only",
-  None: "open, no encryption",
+  None: "open networks, no encryption",
+  OWE:  "open and Enhanced Open networks, encrypted with OWE where offered",
 };
 
 function currentType() {
@@ -611,7 +621,7 @@ function buildProfile(o) {
     plStr("SSID_STR", o.ssid),
     plBool("HIDDEN_NETWORK", o.hidden),
     plBool("AutoJoin", o.autojoin),
-    plStr("EncryptionType", o.encType),
+    plStr("EncryptionType", encValue(o.encType)),
     plBool("DisableAssociationMACRandomization", !o.privAddr),
   ];
 
@@ -672,7 +682,7 @@ function buildProfile(o) {
             : o.type === "peap" ? ` (${o.peapUser})` : "";
   const label = o.type === "personal"
     ? securityLabel("personal", o.encType).replace(/ \(.*\)$/, "")
-    : t.label;
+    : o.encType === "OWE" ? "Enhanced Open" : t.label;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
@@ -796,7 +806,9 @@ function methodText(o) {
                    : ", real username sent as outer identity");
     case "personal": return "Passphrase (" +
       { WPA: "PSK", WPA2: "PSK or SAE", WPA3: "SAE only" }[o.encType] + ")";
-    default: return "None — anyone in range can join and read the traffic";
+    default: return o.encType === "OWE"
+      ? "No password; traffic encrypted with OWE on supported devices"
+      : "None — anyone in range can join and read the traffic";
   }
 }
 
@@ -863,7 +875,8 @@ $("build").addEventListener("click", async () => {
     $("xml").textContent = xml;
 
     const tail = type === "eaptls" ? user
-               : type === "peap" ? `peap-${peapUser}` : type;
+               : type === "peap" ? `peap-${peapUser}`
+               : encType === "OWE" ? "owe" : type;
     const slug = (ssid + "-" + tail).replace(/[^A-Za-z0-9._-]/g, "_");
     const fname = `${slug}.mobileconfig`;
     const blob = new Blob([xml], { type: "application/x-apple-aspen-config" });
@@ -875,7 +888,7 @@ $("build").addEventListener("click", async () => {
       ["network", `${esc(ssid)}${o.hidden ? " (hidden)" : ""}`],
       ["method", methodText(o)],
       ["security", `${esc(securityLabel(type, encType))}: joins ${ENC_DESC[encType]} ` +
-        `(<code>EncryptionType ${encType}</code>)`],
+        `(<code>EncryptionType ${encValue(encType)}</code>)`],
       ["private address", o.privAddr
         ? "on — device picks Fixed or Rotating"
         : "<b style='color:#9a6700'>off</b> — device uses its real MAC address"],
@@ -916,7 +929,15 @@ $("build").addEventListener("click", async () => {
         "accept a server certificate that is not yours at all. That removes " +
         "most of the protection " + t.label + " gives you.");
     }
-    if (type === "open") {
+    if (encType === "OWE") {
+      warn.push(
+        "<b>Enhanced Open encrypts but does not authenticate.</b> Traffic " +
+        "is protected from passive listening, but anyone can run an access " +
+        "point with the same name. OWE needs iOS 16.1, iPadOS 16 or macOS 13 " +
+        "and iPhone 11, or an iPad or Mac from late 2020, or newer; older " +
+        "devices cannot join an OWE-only WLAN and join a transition-mode " +
+        "WLAN as plain open.");
+    } else if (type === "open") {
       warn.push(
         "<b>This is an open network.</b> Nothing is encrypted at the Wi-Fi " +
         "layer, so anyone in range can read traffic that is not protected " +
