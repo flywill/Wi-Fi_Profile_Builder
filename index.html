@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wi-Fi profile builder</title>
 <!--
-  Standalone .mobileconfig builder for Wi-Fi: EAP-TLS, PEAP, WPA2 Personal
-  and WPA3 Personal.
+  Standalone .mobileconfig builder for Wi-Fi: EAP-TLS, PEAP, Personal
+  (WPA2 PSK / WPA3 SAE) and open networks.
 
   Open this file directly in a browser. Nothing is uploaded and no network
   request is made: the certificates you choose are read with the local
@@ -87,9 +87,9 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
 <h1>Wi-Fi profile builder</h1>
 <div class="sub">
   Builds an Apple <code>.mobileconfig</code> for iPhone, iPad and Mac:
-  EAP-TLS, PEAP, WPA2 Personal or WPA3 Personal.
+  EAP-TLS, PEAP, Personal (WPA2/WPA3) or open networks.
   Runs entirely in this page &mdash; nothing is uploaded.
-  <span class="ver">v7</span>
+  <span class="ver">v8</span>
 </div>
 
 <div id="flash"></div>
@@ -103,16 +103,16 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
     <label class="type"><input type="radio" name="type" value="peap">
       <b>PEAP</b>
       <div class="hint">802.1X with username and password (MSCHAPv2).</div></label>
-    <label class="type"><input type="radio" name="type" value="psk">
-      <b>WPA2 Personal</b>
-      <div class="hint">Pre-shared key (PSK).</div></label>
-    <label class="type"><input type="radio" name="type" value="sae">
-      <b>WPA3 Personal</b>
-      <div class="hint">SAE, optionally with WPA2 fallback.</div></label>
+    <label class="type"><input type="radio" name="type" value="personal">
+      <b>Personal</b>
+      <div class="hint">Passphrase: WPA2 (PSK), WPA3 (SAE) or both.</div></label>
+    <label class="type"><input type="radio" name="type" value="open">
+      <b>Open</b>
+      <div class="hint">No password and no encryption.</div></label>
   </div>
 </div>
 
-<div class="card">
+<div class="card" data-types="eaptls peap personal">
   <h2>2 &middot; Credentials</h2>
 
   <div data-types="eaptls peap">
@@ -164,7 +164,7 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
     <input type="text" id="outerId" placeholder="anonymous" spellcheck="false">
   </div>
 
-  <div data-types="psk sae">
+  <div data-types="personal">
     <label for="psk">Passphrase
       <div class="hint" id="pskHint"></div>
     </label>
@@ -174,7 +174,7 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
 </div>
 
 <div class="card">
-  <h2>3 &middot; Network</h2>
+  <h2 id="netTitle">3 &middot; Network</h2>
   <div class="row">
     <div>
       <label for="ssid">Wi-Fi network name (SSID)</label>
@@ -208,21 +208,27 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
     </div>
   </div>
 
-  <div data-types="eaptls peap">
-    <label for="sec">Security</label>
-    <select id="sec">
-      <option value="WPA" selected>WPA/WPA2 Enterprise</option>
-      <option value="WPA2">WPA2/WPA3 Enterprise</option>
-      <option value="WPA3">WPA3 Enterprise only</option>
-    </select>
-    <div class="hint">The networks the device may join, from iOS 16 and macOS 13
-      on. Choose WPA2/WPA3 or WPA3 only if the WLAN runs WPA3: with
-      WPA/WPA2 selected, the device refuses a WPA3-only network.</div>
+  <div class="row">
+    <div>
+      <label for="sec">Security type</label>
+      <select id="sec"></select>
+      <div class="hint" id="secHint"></div>
+    </div>
+    <div>
+      <label for="privAddr">Private Wi-Fi address</label>
+      <select id="privAddr">
+        <option value="on" selected>On (device picks Fixed or Rotating)</option>
+        <option value="off">Off (use the device's real MAC)</option>
+      </select>
+      <div class="hint">A profile can only turn the private address on or off.
+        With it on, iOS 18 and macOS 15 and later use <b>Fixed</b> on WPA2 or
+        stronger networks and <b>Rotating</b> on open ones. The user can still
+        change it in Settings, because only an MDM-installed profile locks it.
+        Needs iOS 14 or macOS 15; older systems ignore it.</div>
+    </div>
   </div>
 
   <label>Options</label>
-  <div class="chk" data-types="sae"><input type="checkbox" id="saeTrans">
-    <span>Also allow WPA2 (WPA2/WPA3 transition mode)</span></div>
   <div class="chk"><input type="checkbox" id="autojoin" checked>
     <span>Join this network automatically</span></div>
   <div class="chk"><input type="checkbox" id="hidden">
@@ -244,7 +250,7 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
 </div>
 
 <div class="card" id="outCard" style="display:none">
-  <h2>4 &middot; Result</h2>
+  <h2 id="outTitle">4 &middot; Result</h2>
   <div id="summary"></div>
   <pre id="xml" style="display:none"></pre>
 </div>
@@ -258,9 +264,10 @@ background:#eef0f3;border-radius:4px;padding:1px 7px}
   -in alice.crt -inkey alice.key -certfile ca.pem \
   -name alice -out alice.p12</pre>
   </div>
+  <span data-types="eaptls peap personal">
   <b>Treat the finished profile as a secret.</b> It contains
   <span id="secretNote"></span>, readable by anyone who opens the file.
-  Transfer it, install it, then delete your copy.
+  Transfer it, install it, then delete your copy.</span>
 </div>
 
 </div>
@@ -460,36 +467,71 @@ const TYPES = {
             secret: "the user's private key and the password that unlocks it" },
   peap:   { label: "PEAP", enterprise: true,
             secret: "the PEAP username and password" },
-  psk:    { label: "WPA2 Personal", enterprise: false,
-            secret: "the Wi-Fi passphrase" },
-  sae:    { label: "WPA3 Personal", enterprise: false,
-            secret: "the Wi-Fi passphrase" },
+  personal: { label: "Personal", enterprise: false,
+              secret: "the Wi-Fi passphrase" },
+  open:   { label: "Open", enterprise: false, secret: null },
 };
 
-/* EncryptionType meanings from iOS 16 and macOS 13. Earlier iOS treats all
-   three WPA values alike; earlier macOS needs an exact match. */
+/* EncryptionType choices per network type, first entry is the default.
+   Meanings hold from iOS 16 and macOS 13: WPA joins WPA or WPA2, WPA2 joins
+   WPA2 or WPA3, WPA3 joins WPA3 only. Earlier iOS treats the three WPA values
+   alike; earlier macOS needs an exact match. WEP and Any (which admits WEP)
+   are not offered. */
+const SECURITY = {
+  eaptls: [
+    { value: "WPA",  label: "WPA/WPA2 Enterprise" },
+    { value: "WPA2", label: "WPA2/WPA3 Enterprise" },
+    { value: "WPA3", label: "WPA3 Enterprise only" },
+  ],
+  personal: [
+    { value: "WPA2", label: "WPA2/WPA3 Personal (PSK + SAE)" },
+    { value: "WPA",  label: "WPA/WPA2 Personal (PSK)" },
+    { value: "WPA3", label: "WPA3 Personal only (SAE)" },
+  ],
+  open: [
+    { value: "None", label: "Open (no encryption)" },
+  ],
+};
+SECURITY.peap = SECURITY.eaptls;
+
+const SEC_HINT = {
+  eaptls: "Match the WLAN. With WPA/WPA2 selected the device refuses a " +
+          "WPA3-only network; choose WPA2/WPA3 or WPA3 only for one.",
+  personal: "WPA2/WPA3 joins a PSK, SAE or transition-mode WLAN. " +
+            "WPA3 only refuses a WPA2 (PSK) network.",
+  open: "Traffic on an open network is not encrypted.",
+};
+SEC_HINT.peap = SEC_HINT.eaptls;
+
 const ENC_DESC = {
   WPA:  "WPA or WPA2",
   WPA2: "WPA2 or WPA3",
   WPA3: "WPA3 only",
+  None: "open, no encryption",
 };
 
 function currentType() {
   return document.querySelector("input[name=type]:checked").value;
 }
 
+function securityLabel(type, enc) {
+  return SECURITY[type].find((s) => s.value === enc).label;
+}
+
 /* WPA2 accepts 8 to 63 ASCII characters, which are hashed into the key, or
    the 256-bit key itself as 64 hex digits. SAE uses the passphrase directly
-   and has no hex form. Non-ASCII passphrases are refused because devices
-   disagree on how to encode them. */
-function passphraseProblem(type, s) {
-  if (type === "psk" && /^[0-9A-Fa-f]{64}$/.test(s)) return null;
+   and has no hex form, so a hex key is refused when WPA3 only is chosen.
+   Non-ASCII passphrases are refused because devices disagree on how to
+   encode them. */
+function passphraseProblem(enc, s) {
+  const hexOk = enc !== "WPA3";
+  if (hexOk && /^[0-9A-Fa-f]{64}$/.test(s)) return null;
   if (!/^[\x20-\x7e]*$/.test(s)) {
     return "The passphrase contains characters outside printable ASCII.";
   }
   if (s.length < 8 || s.length > 63) {
     return `The passphrase is ${s.length} characters. It must be 8 to 63` +
-      (type === "psk" ? ", or exactly 64 hexadecimal digits." : ".");
+      (hexOk ? ", or exactly 64 hexadecimal digits." : ". WPA3 (SAE) has no hex form.");
   }
   return null;
 }
@@ -570,6 +612,7 @@ function buildProfile(o) {
     plBool("HIDDEN_NETWORK", o.hidden),
     plBool("AutoJoin", o.autojoin),
     plStr("EncryptionType", o.encType),
+    plBool("DisableAssociationMACRandomization", !o.privAddr),
   ];
 
   if (t.enterprise) {
@@ -610,7 +653,7 @@ function buildProfile(o) {
               "    <dict>",
               eap.join("\n"),
               "    </dict>");
-  } else {
+  } else if (o.type === "personal") {
     wifi.push(plStr("Password", o.psk));
   }
   payloads.push(wifi.join("\n"));
@@ -627,6 +670,9 @@ function buildProfile(o) {
 
   const who = o.type === "eaptls" ? ` (${o.user})`
             : o.type === "peap" ? ` (${o.peapUser})` : "";
+  const label = o.type === "personal"
+    ? securityLabel("personal", o.encType).replace(/ \(.*\)$/, "")
+    : t.label;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
@@ -642,7 +688,7 @@ function buildProfile(o) {
   <key>PayloadUUID</key>
   <string>${uTop}</string>
   <key>PayloadDisplayName</key>
-  <string>${esc(o.ssid)} ${t.label}${esc(who)}</string>
+  <string>${esc(o.ssid)} ${esc(label)}${esc(who)}</string>
 ${org}  <key>PayloadRemovalDisallowed</key>
   <false/>
   <key>PayloadContent</key>
@@ -663,16 +709,30 @@ function applyType() {
   document.querySelectorAll("[data-types]").forEach((el) => {
     el.style.display = el.dataset.types.split(" ").includes(type) ? "" : "none";
   });
-  $("pskHint").textContent = type === "psk"
-    ? "8 to 63 printable ASCII characters, or exactly 64 hexadecimal digits."
-    : "8 to 63 printable ASCII characters.";
-  $("secretNote").textContent = TYPES[type].secret;
+  $("sec").innerHTML = SECURITY[type].map((s) =>
+    `<option value="${s.value}">${esc(s.label)}</option>`).join("");
+  $("sec").disabled = SECURITY[type].length === 1;
+  $("secHint").textContent = SEC_HINT[type];
+  /* Open networks have no credentials card, so the later cards move up. */
+  const n = type === "open" ? 2 : 3;
+  $("netTitle").textContent = `${n} · Network`;
+  $("outTitle").textContent = `${n + 1} · Result`;
+  $("secretNote").textContent = TYPES[type].secret || "";
+  applySecurity();
+}
+
+function applySecurity() {
+  $("pskHint").textContent = $("sec").value === "WPA3"
+    ? "8 to 63 printable ASCII characters. WPA3 (SAE) has no hex form."
+    : "8 to 63 printable ASCII characters, or exactly 64 hexadecimal digits.";
   $("outCard").style.display = "none";
   flash("", "");
 }
 
 document.querySelectorAll("input[name=type]").forEach((r) =>
   r.addEventListener("change", applyType));
+$("sec").addEventListener("change", applySecurity);
+$("privAddr").addEventListener("change", applySecurity);
 applyType();
 
 document.querySelectorAll("button.eye").forEach((b) =>
@@ -734,10 +794,9 @@ function methodText(o) {
       return `PEAP with MSCHAPv2 only (type 25), user <b>${esc(o.peapUser)}</b>` +
         (o.outerId ? `, outer identity <b>${esc(o.outerId)}</b>`
                    : ", real username sent as outer identity");
-    case "psk": return "WPA2 Personal (pre-shared key)";
-    default:
-      return o.encType === "WPA3" ? "WPA3 Personal (SAE) only"
-                                  : "WPA3 Personal (SAE), WPA2 fallback allowed";
+    case "personal": return "Passphrase (" +
+      { WPA: "PSK", WPA2: "PSK or SAE", WPA3: "SAE only" }[o.encType] + ")";
+    default: return "None — anyone in range can join and read the traffic";
   }
 }
 
@@ -768,7 +827,7 @@ $("build").addEventListener("click", async () => {
       if (!peapUser) missing.push("the PEAP username");
       if (!peapPass) missing.push("the PEAP password");
     }
-    if (!t.enterprise && !psk) missing.push("the passphrase");
+    if (type === "personal" && !psk) missing.push("the passphrase");
     if (!ssid) missing.push("the SSID");
     if (type === "eaptls" && !user) missing.push("the user label");
     if (missing.length) {
@@ -781,22 +840,20 @@ $("build").addEventListener("click", async () => {
         `The SSID is ${bytes} bytes. 802.11 allows 32. Accented or ` +
         `non-Latin characters use more than one byte each.`);
     }
-    if (!t.enterprise) {
-      const why = passphraseProblem(type, psk);
+    const encType = $("sec").value;
+    if (type === "personal") {
+      const why = passphraseProblem(encType, psk);
       if (why) throw new Error(why);
     }
 
     const ca = caFile ? derBase64(caFile, "The certificate authority") : null;
     const p12B64 = p12File ? p12Base64(p12File) : null;
 
-    const encType = t.enterprise ? $("sec").value
-                  : type === "psk" ? "WPA2"
-                  : $("saeTrans").checked ? "WPA2" : "WPA3";
-
     const o = {
       type, ssid, server, user, org: $("org").value.trim(),
       caB64: ca && ca.b64, p12B64, p12Pass,
       peapUser, peapPass, outerId, psk, encType,
+      privAddr: $("privAddr").value === "on",
       autojoin: $("autojoin").checked,
       hidden: $("hidden").checked,
       trustExc: t.enterprise && $("trustExc").checked,
@@ -817,7 +874,11 @@ $("build").addEventListener("click", async () => {
       ["file", `<b>${esc(fname)}</b>, ${blob.size} bytes`],
       ["network", `${esc(ssid)}${o.hidden ? " (hidden)" : ""}`],
       ["method", methodText(o)],
-      ["security", `${ENC_DESC[encType]} (<code>EncryptionType ${encType}</code>)`],
+      ["security", `${esc(securityLabel(type, encType))}: joins ${ENC_DESC[encType]} ` +
+        `(<code>EncryptionType ${encType}</code>)`],
+      ["private address", o.privAddr
+        ? "on — device picks Fixed or Rotating"
+        : "<b style='color:#9a6700'>off</b> — device uses its real MAC address"],
     ];
     if (t.enterprise) {
       rows.push(["trusts", server
@@ -827,7 +888,7 @@ $("build").addEventListener("click", async () => {
         ? "<b style='color:#9a6700'>user may accept an unknown server</b>"
         : "none — an untrusted server is refused"]);
     }
-    rows.push(["contains", esc(t.secret)]);
+    rows.push(["contains", t.secret ? esc(t.secret) : "no secrets"]);
 
     $("outCard").style.display = "block";
     $("summary").innerHTML = `
@@ -855,8 +916,23 @@ $("build").addEventListener("click", async () => {
         "accept a server certificate that is not yours at all. That removes " +
         "most of the protection " + t.label + " gives you.");
     }
-    const done = `Send it to the device, install it, then delete your copy. ` +
-      `It contains ${esc(t.secret)}.`;
+    if (type === "open") {
+      warn.push(
+        "<b>This is an open network.</b> Nothing is encrypted at the Wi-Fi " +
+        "layer, so anyone in range can read traffic that is not protected " +
+        "by TLS or a VPN.");
+    }
+    if (!o.privAddr) {
+      warn.push(
+        "<b>Private address is off.</b> The device joins with its real MAC " +
+        "address on this network, which lets it be tracked, and Settings " +
+        "shows a privacy warning. Because the profile is not installed by " +
+        "MDM, the user can turn the private address back on.");
+    }
+    const done = t.secret
+      ? `Send it to the device, install it, then delete your copy. ` +
+        `It contains ${esc(t.secret)}.`
+      : "Send it to the device and install it.";
     flash(warn.length ? "warnbox" : "ok",
       warn.length
         ? warn.join("<br><br>") + "<br><br>Profile built. " + done
